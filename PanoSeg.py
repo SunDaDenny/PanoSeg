@@ -16,9 +16,17 @@ yolo_result_path = output_dir + '/detection'
 
 mask_result_path = output_dir + '/mask/'
 
+
+#Panorama to cube
+print('Start panorama to cube')
+
 cmd_pano_cube = 'sphere2cube ' + input_file + ' -r ' + str(face_size) + ' -f PNG -o ' + cube_path + '_;'
 cmd_pano_cube_45 = 'sphere2cube ' + input_file + ' -r ' + str(face_size) + ' -f PNG -o ' + cube_path + '45_' + ' -R 0 0 -45'
 os.system(cmd_pano_cube + cmd_pano_cube_45)
+
+
+#Rename all face image and rotate top/down face
+print('Rename all face image and rotate top/down face')
 
 cube_list = open( cube_path + 'list.txt','w') 
 
@@ -37,6 +45,10 @@ for i in range(9,13):
 	cv2.imwrite( cube_path + str(i) + '.png', rotated )
 	os.system('mv ' + cube_path + str(i) + '.png ' + cube_path + str(i))
 
+
+#YOLO detection
+print('Start YOLO detection')
+
 if not os.path.exists(yolo_result_path):
     os.makedirs(yolo_result_path)
 
@@ -44,6 +56,10 @@ cmd_cd_in = 'cd ' + yolo_path + ';'
 cmd_detector = './darknet detect cfg/yolo.cfg pretrain/yolo.weights ' + '../' + cube_path + 'list.txt' + ' -out ' + '../' + yolo_result_path + ';' 
 cmd_cd_out = 'cd ..'
 os.system(cmd_cd_in + cmd_detector + cmd_cd_out)
+
+
+#Crop and resize bbox image
+print('Start crop and resize bbox image')
 
 mask_bbox_scale = 1.25
 
@@ -80,6 +96,9 @@ for i in range(1,13):
 		bbox_scale_list.write( bbox[0] + ' ' + str(bbox[1]) + ' ' + str(bbox[2]) + ' ' + str(bbox[3]) + ' ' + str(bbox[4]) + ' ' + str(bbox[5]) +'\n')
 		bbox_scale_list.close()
 
+#FastMask
+print('Start FastMask detection')
+
 for i in range(1,13):
 	j = 0
 	while(1):
@@ -94,10 +113,11 @@ for i in range(1,13):
 		else:
 			break
 
+#Paste mask back to face image and merge the result to panorama format 
+print('Start paste mask back to face image\nand merge the result to panorama format')
+
 label_list = ['chair','sofa','bed','diningtable','tvmonitor','refrigerator','pottedplant']
-
-#'diningtable','person','bottle','laptop','clock','bowl'
-
+#			'person','bottle','laptop','book','clock','bowl']
 
 if not os.path.exists(mask_result_path):
     os.makedirs(mask_result_path)
@@ -142,3 +162,51 @@ for i, label in enumerate(label_list):
 	merge = pano_mask_img + pano_mask_45_img
 	merge[merge>0] = 255
 	cv2.imwrite( mask_label_path + '.png', merge )
+
+	print('class ' + str(i) + ' ' + label + ' finish')
+
+
+#Map all result mask to original image
+print('Start map all result mask to original image')
+
+def im2double(im):
+    info = np.iinfo(im.dtype)
+    return im.astype(np.float) / info.max
+
+def im2int(im):
+	im = im * 255
+	return im.astype(np.int)
+
+COLORS = [0xAEEE00, 0xAEEE00, 0xF977D2, 0xEFC94C,
+		0x468966, 0xA7A37E, 0x00A545, 0x046380, 
+		0xE6E2AF, 0xB64926, 0x8E2800, 0xFFE11A,
+		0xFF6138, 0x193441, 0xFF9800, 0x7D9100]
+
+image =  cv2.imread(input_file ,1)
+image = im2double(image)
+
+for i, label in enumerate(label_list):
+
+	mask_label_path = mask_result_path + label
+	if(os.path.exists(mask_label_path + '.png')):
+		mask = cv2.imread( mask_label_path + '.png',0)
+		mask = im2double(mask)
+
+		mask[mask > 0] = 0.5
+		mask[mask == 0] = 1
+		color = COLORS[i % len(COLORS)]
+
+		#print(np.count_nonzero(mask))
+		for k in range(3):
+			image[:,:,k] = image[:,:,k] * mask
+
+		mask[mask == 1] = 0
+		mask[mask > 0] = 0.5
+		
+		for k in range(3):
+			image[:,:,k] += mask * (color & 0xff)/255
+			color >>= 8;
+
+cv2.imwrite(output_dir + '/final.png' , im2int(image) )
+cv2.imshow('img' , image)
+cv2.waitKey(1000000)
